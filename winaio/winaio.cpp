@@ -13,4 +13,6 @@ void loop::run() noexcept {
   }
 }
 
+thread_local single_threaded_loop single_threaded_loop::instance;
+
 }  // namespace waio
