@@ -32,6 +32,7 @@ void producer() {
   async();
   waio::loop::instance.run();
 }
+
 void consumer() {
   signal_prod_ready.acquire();
   auto pipe = waio::open(pipe_name);
