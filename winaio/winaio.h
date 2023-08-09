@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <future>
 #include <memory>
+#include <string>
 #include <type_traits>
 
 // windows header files
@@ -30,11 +31,16 @@ inline void check_handle(HANDLE handle) {
 
 namespace waio {
 
-struct loop {
+class loop {
+ public:
   loop() noexcept;
   void run() noexcept;
+  void exit() noexcept;
   static thread_local loop instance;
   HANDLE iocp = INVALID_HANDLE_VALUE;
+
+ private:
+  OVERLAPPED o_ = {};
 };
 
 struct fire_and_forget {};
@@ -52,6 +58,8 @@ struct std::coroutine_traits<waio::fire_and_forget, Args...> {
 
 template <class T>
 class task_completion_source;
+template <>
+class task_completion_source<void>;
 
 template <class T>
 class task {
@@ -59,11 +67,26 @@ class task {
 
  public:
   void schedule(std::coroutine_handle<> resume) noexcept {
-    source_->schedule(resume);
+    source_->schedule(resume, this);
   }
+  void set_value(T&& value) { value_ = std::move(value); }
+
+ protected:
+  T value_;
 
  private:
   task_completion_source<T>* source_;
+};
+
+template <>
+class task<void> {
+  friend class task_completion_source<void>;
+
+ public:
+  void schedule(std::coroutine_handle<> resume) noexcept;
+
+ private:
+  task_completion_source<void>* source_;
 };
 
 template <class T>
@@ -75,20 +98,20 @@ class task_completion_source<T> {
     task.source_ = this;
     return task;
   }
-  void schedule(std::coroutine_handle<> resume) noexcept { resume_ = resume; }
-
-  template <class U>
-  void set_value(U&& value) noexcept {
-    value_ = std::forward<U>(value);
+  void schedule(std::coroutine_handle<> resume, task<T>* task) noexcept {
+    resume_ = resume;
+    task_ = task;
+  }
+  void set_value(T&& value) noexcept {
+    task_->set_value(std::move(value));
     details::check_bool(PostQueuedCompletionStatus(
         loop::instance.iocp, 0, reinterpret_cast<ULONG_PTR>(resume_.address()),
         nullptr));
   }
-  T& get() const noexcept { return value_; }
 
  private:
   std::coroutine_handle<> resume_;
-  T value_;
+  task<T>* task_;
 };
 
 template <>
@@ -105,11 +128,14 @@ class task_completion_source<void> {
         loop::instance.iocp, 0, reinterpret_cast<ULONG_PTR>(resume_.address()),
         nullptr));
   }
-  void get() const noexcept {}
 
  private:
   std::coroutine_handle<> resume_;
 };
+
+inline void task<void>::schedule(std::coroutine_handle<> resume) noexcept {
+  source_->schedule(resume);
+}
 
 template <class T, class... Args>
   requires(!std::is_void_v<T> && !std::is_reference_v<T>)
@@ -137,6 +163,19 @@ struct std::coroutine_traits<waio::task<void>, Args...> {
   };
 };
 
+template <class T>
+  requires(!std::is_void_v<T> && !std::is_reference_v<T>)
+inline auto operator co_await(waio::task<T> task) noexcept {
+  struct awaiter : waio::task<T> {
+    bool await_ready() const noexcept { return false; }
+    void await_suspend(std::coroutine_handle<> resume) noexcept {
+      this->schedule(resume);
+    }
+    T await_resume() noexcept { return T{std::move(this->value_)}; }
+  };
+  return awaiter{std::move(task)};
+}
+
 inline auto operator co_await(waio::task<void> task) noexcept {
   struct awaiter : waio::task<void> {
     bool await_ready() const noexcept { return false; }
@@ -151,6 +190,8 @@ inline auto operator co_await(waio::task<void> task) noexcept {
 HANDLE create(const std::filesystem::path& path) noexcept;
 HANDLE open(const std::filesystem::path& path) noexcept;
 task<void> connect(HANDLE pipe);
+task<std::string> read(HANDLE stream, unsigned size);
+task<void> write(HANDLE stream, std::string data);
 
 }  // namespace waio
 
