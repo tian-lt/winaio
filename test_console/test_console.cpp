@@ -36,6 +36,7 @@ void producer() {
 void consumer() {
   signal_prod_ready.acquire();
   auto pipe = waio::open(pipe_name);
+  if (pipe == INVALID_HANDLE_VALUE) throw std::runtime_error{"bad pipe handle"};
   auto async = [pipe]() -> waio::fire_and_forget {
     auto resp =
         co_await waio::read(pipe, static_cast<unsigned>(test_msg.size()));
