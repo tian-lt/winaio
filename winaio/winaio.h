@@ -165,7 +165,7 @@ struct std::coroutine_traits<waio::task<void>, Args...> {
 
 template <class T>
   requires(!std::is_void_v<T> && !std::is_reference_v<T>)
-inline auto operator co_await(waio::task<T> task) noexcept {
+auto operator co_await(waio::task<T> task) noexcept {
   struct awaiter : waio::task<T> {
     bool await_ready() const noexcept { return false; }
     void await_suspend(std::coroutine_handle<> resume) noexcept {
